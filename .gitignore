@@ -1,0 +1,11 @@
+/package-lock.json
+/node_modules/
+/Intern/node_modules/# Python virtual environments
+env/
+Intern/env/
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
