@@ -95,26 +95,45 @@ const AR = () => {
   const handleGenerateCode = () => {
     
     const matlabCode = `
-function AR_process(n_steps, p, phi, sigma)
 
-epsilon = sigma * randn(n_steps,1);
-X = zeros(n_steps,1);
+export function AR_process(n_steps, p, phi, sigma) {
 
-for t = 1:p
-    X(t) = epsilon(t);
-end
+  if (phi.length !== p) {
+    throw new Error("The number of AR coefficients must match the specified order p");
+  }
+  function randn() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
 
-for t = p+1:n_steps
-    X(t) = sum(phi .* X(t-1:-1:t-p)') + epsilon(t);
-end
+  const epsilon = Array.from({ length: n_steps }, () => sigma * randn());
 
-figure;
-plot(1:n_steps, X, 'b');
-title(['Simulated AR(', num2str(p), ') Process']);
-xlabel('Time');
-ylabel('Value');
+  const X = Array(n_steps).fill(0);
 
-end
+
+  for (let t = 0; t < p; t++) {
+    X[t] = epsilon[t];
+  }
+
+  // ===== Simulate AR(p) process =====
+  // MATLAB: for t = (p+1):n_steps
+  for (let t = p; t < n_steps; t++) {
+    let sum = 0;
+    for (let k = 0; k < p; k++) {
+      sum += phi[k] * X[t - 1 - k];
+    }
+    X[t] = sum + epsilon[t];
+  }
+
+  // Return data (used for plotting in React / backend)
+  return {
+    X,        // Simulated AR signal
+    epsilon  // White noise
+  };
+}
+
 `;
     setCode(matlabCode);
   };
