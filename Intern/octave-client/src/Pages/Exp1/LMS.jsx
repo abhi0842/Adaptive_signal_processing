@@ -95,6 +95,10 @@ export default function LMS() {
 
   // ---------------- RUN LMS ----------------
   const handleRun = async () => {
+    if (!code) {
+    alert("Please generate the code first.");
+    return;
+  }
     setLoading(true);
 
     const d = await readCSV("/inputs/real.csv");
