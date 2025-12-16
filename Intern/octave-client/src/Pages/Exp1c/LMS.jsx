@@ -51,6 +51,10 @@ const LMS = () => {
 
   /* ---------- LMS Non-Stationary ---------- */
   const handleRun = () => {
+    if (!code) {
+    alert("Please generate the code first.");
+    return;
+  }
     const n = inputs.find(i => i.id === "n").value;
     const M = inputs.find(i => i.id === "M").value;
     const mu = inputs.find(i => i.id === "mu").value;
