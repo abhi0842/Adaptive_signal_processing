@@ -1,208 +1,243 @@
-import React, { useState } from 'react'
-import image from '../../image.png'
-import axios from 'axios';
+import React, { useState } from "react";
+import image from "../../image.png";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+} from "chart.js";
 
-const RMS = () => {
-  const [inputs, setInputs] = useState([
-    { id: 'forgetting-factor', label: 'Forgetting factor', min: 0, max: 1, step: 0.0001, value: 0.5 },
-    { id: 'order', label: 'Order of Filter (M)', min: 2, max: 100, step: 1, value: 50 },
-    { id: 'experiment', label: 'No.of iterations', min: 10, max: 1000, step: 1, value: 50 }
-  ]);
-
-  const [code, setCode] = useState('');
-  const [codeHtml, setCodeHtml] = useState('Code will be generated here.!');
-  const [imageUrls, setImageUrls] = useState(new Array(1).fill(image));
-  const [loading, setLoading] = useState(false);
-  const [showImages, setShowImages] = useState(false);
-
-
-  const handleInputChange = (id, value) => {
-    const input = inputs.find(input => input.id === id);
-    const newValue = Math.min(Math.max(value, input.min), input.max);
-    setInputs(inputs.map(input => input.id === id ? { ...input, value: newValue } : input));
-  };
-
-
-  const handleGenerateCode = () => {
-    const generatedCode = `
-function rls_nonstationary(n,lambda,N,uniqueIdentifier)
-    % n = 1000;
-    x = randn(n, 1);
-    d = sin(0.01 * (1:n)') + 0.5 * randn(n, 1);
-    % non-stationary signal 
-    % RLS parameters 
-    %lambda = 0.99; 
-    %N = 4; 
-    % Initialize variables
-    w = zeros(N, 1); 
-    P = eye(N) * 1000;
-    y = zeros(n, 1);
-    e = zeros(n, 1);
-    w_hist = zeros(n, N);
-    % RLS algorithm 
-    for i = N:n     
-        x_vec = x(i:-1:i-N+1);    
-        pi = P * x_vec;    
-        k = pi / (lambda + x_vec' * pi);  
-        y(i) = w' * x_vec;   
-        e(i) = d(i) - y(i);   
-        w = w + k * e(i);    
-        P = (P - k * x_vec' * P) / lambda;   
-        w_hist(i, :) = w'; 
-    end 
-    % Plot results 
-    figure('Position', [100, 100, 800, 600]); % Set figure size
-    subplot(3, 1, 1, 'position', [0.1, 0.73, 0.8, 0.20]);
-    plot(d, 'DisplayName', 'Desired signal'); 
-    hold on;
-    plot(y, 'DisplayName', 'RLS output');
-    legend; 
-    title('RLS Output vs Desired Signal');
-    subplot(3, 1, 2, 'position', [0.1, 0.45, 0.8, 0.20]);
-    plot(e, 'DisplayName', 'Error'); 
-    legend; 
-    title('Error Signal'); 
-    subplot(3, 1, 3, 'position', [0.1, 0.17, 0.8, 0.20]);
-    plot(vecnorm(w_hist, 2, 2), 'DisplayName', 'Norm of weight vector'); 
-    legend;
-    title('Norm of Weight Vector');
-    % Save figure with unique identifier
-    saveas(gcf, sprintf('Outputs/rls_nonstationary_%s.png', uniqueIdentifier));
-    close(gcf);
-end
- `;
-    setCode(generatedCode);
-    setCodeHtml(`<pre>${generatedCode}</pre>`);
-  };
-
-  const handleRun = async () => {
-  setLoading(true);  // Start loading
-  setShowImages(false);  // Hide images until new ones are loaded
-  const data = {
-    n: inputs.find(input => input.id === 'experiment').value,
-    lambda: inputs.find(input => input.id === 'forgetting-factor').value,
-    N: inputs.find(input => input.id === 'order').value
-  };
-
-  try {
-    const response = await axios.post('http://localhost:5000/rls_nonstationary-process', data, {
-      headers: {
-        // 'Content-Type': 'multipart/form-data'
-      }
-    });
-    
-    setImageUrls(response.data.images.map(img => `http://localhost:5000${img}`));
-    setShowImages(true);  // Show images after loading
-  } catch (error) {
-    console.error('Error running the script:', error);
-  } finally {
-    setLoading(false);  // Stop loading
-  }
-};
-  
-  const handleDownload = () => {
-    const element = document.createElement("a");
-    const file = new Blob([code], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
-    element.download = "rls_denoise.m";
-    document.body.appendChild(element); // Required for this to work in FireFox
-    element.click();
-  };
-
-  const SphereLoading = () => (
-  <div className="flex felx-col fixed inset-0 flex items-center justify-center bg-white bg-opacity-50 ">
-    <div className="w-20 h-10">
-      <div className="relative w-full h-full overflow-hidden p-2 pl-3">
-        <p className='font-sans text-sm font-bold'>Loading...</p>
-        <div className="absolute inset-0 bg-blue-button rounded-lg animate-pulse opacity-0 text-black">
-        </div>
-        
-      </div>
-    </div>
-  </div>  
+ChartJS.register(
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
 );
 
+const RMS = () => {
+  /* ---------- Inputs ---------- */
+  const [inputs, setInputs] = useState([
+    { id: "forgetting-factor", label: "Forgetting factor (λ)", min: 0, max: 1, step: 0.0001, value: 0.99 },
+    { id: "order", label: "Order of Filter (M)", min: 2, max: 100, step: 1, value: 4 },
+    { id: "experiment", label: "No. of iterations", min: 10, max: 1000, step: 1, value: 500 }
+  ]);
+
+  const [code, setCode] = useState("");
+  const [codeHtml, setCodeHtml] = useState("Code will be generated here.!");
+  const [plots, setPlots] = useState(null);
+
+  /* ---------- Input Handler ---------- */
+  const handleInputChange = (id, value) => {
+    const input = inputs.find(i => i.id === id);
+    const newValue = Math.min(Math.max(value, input.min), input.max);
+    setInputs(inputs.map(i => (i.id === id ? { ...i, value: newValue } : i)));
+  };
+
+  /* ---------- Gaussian randn ---------- */
+  const randn = () => {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+
+  /* ---------- RUN RLS (PURE JS) ---------- */
+  const handleRun = () => {
+    if (!code) {
+    alert("Please generate the code first.");
+    return;
+  }
+    const n = inputs.find(i => i.id === "experiment").value;
+    const lambda = inputs.find(i => i.id === "forgetting-factor").value;
+    const N = inputs.find(i => i.id === "order").value;
+
+    const x = Array.from({ length: n }, randn);
+    const d = Array.from({ length: n }, (_, i) =>
+      Math.sin(0.01 * (i + 1)) + 0.5 * randn()
+    );
+
+    let w = Array(N).fill(0);
+    let P = Array.from({ length: N }, (_, i) =>
+      Array.from({ length: N }, (_, j) => (i === j ? 1000 : 0))
+    );
+
+    let y = Array(n).fill(0);
+    let e = Array(n).fill(0);
+    let wHist = Array.from({ length: n }, () => Array(N).fill(0));
+
+    for (let i = N - 1; i < n; i++) {
+      const xVec = [];
+      for (let k = 0; k < N; k++) {
+        xVec.push(x[i - k]);
+      }
+
+      // pi = P * x_vec
+      const pi = P.map(row =>
+        row.reduce((sum, val, idx) => sum + val * xVec[idx], 0)
+      );
+
+      // gain k
+      const denom = lambda + xVec.reduce((s, v, idx) => s + v * pi[idx], 0);
+      const kGain = pi.map(v => v / denom);
+
+      // output
+      y[i] = w.reduce((s, wi, idx) => s + wi * xVec[idx], 0);
+      e[i] = d[i] - y[i];
+
+      // weight update
+      w = w.map((wi, idx) => wi + kGain[idx] * e[i]);
+
+      // P update
+      const Px = xVec.map((_, r) =>
+        P[r].reduce((s, v, c) => s + v * xVec[c], 0)
+      );
+      P = P.map((row, r) =>
+        row.map((val, c) => (val - kGain[r] * Px[c]) / lambda)
+      );
+
+      wHist[i] = [...w];
+    }
+
+    const wNorm = wHist.map(v =>
+      Math.sqrt(v.reduce((s, x) => s + x * x, 0))
+    );
+
+    setPlots({ d, y, e, wNorm });
+  };
+
+  /* ---------- MATLAB Code ---------- */
+  const handleGenerateCode = () => {
+    const matlabCode = `
+function rls_nonstationary(n, lambda, N)
+
+x = randn(n,1);
+d = sin(0.01*(1:n)') + 0.5*randn(n,1);
+
+w = zeros(N,1);
+P = eye(N)*1000;
+y = zeros(n,1);
+e = zeros(n,1);
+w_hist = zeros(n,N);
+
+for i = N:n
+    x_vec = x(i:-1:i-N+1);
+    pi = P*x_vec;
+    k = pi/(lambda + x_vec'*pi);
+    y(i) = w'*x_vec;
+    e(i) = d(i) - y(i);
+    w = w + k*e(i);
+    P = (P - k*x_vec'*P)/lambda;
+    w_hist(i,:) = w';
+end
+
+figure; plot(d); hold on; plot(y);
+figure; plot(e);
+figure; plot(vecnorm(w_hist,2,2));
+end
+`;
+    setCode(matlabCode);
+    setCodeHtml(`<pre>${matlabCode}</pre>`);
+  };
+
+  /* ---------- Download ---------- */
+  const handleDownload = () => {
+    if (!code) {
+    alert("Please generate the code first.");
+    return;
+  }
+    const blob = new Blob([code], { type: "text/plain" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "rls_nonstationary.m";
+    link.click();
+  };
+
+  /* ---------- Chart Helper ---------- */
+  const chart = (label, data) => ({
+    labels: data.map((_, i) => i + 1),
+    datasets: [
+      {
+        label,
+        data,
+        borderColor: "#6ec1ff",
+        borderWidth: 1.5,
+        pointRadius: 0
+      }
+    ]
+  });
+
   return (
-    <div className='flex flex-col space-y-10'>
-      <div className="flex flex-row gap-5 space-x-5 jusify-between"> 
-        <div className='flex flex-col'>
+    <div className="flex flex-col space-y-10">
+      <div className="flex flex-row gap-5">
+        <div className="flex flex-col">
           <iframe
             srcDoc={codeHtml}
             title="Generated Code"
             width="650"
             height="232"
-            className='outline border-4 p-2 rounded-sm border-blue-hover'
-          ></iframe>
-          <div className='flex justify-between text-sm'>
-            <button 
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleDownload}
-            >
+            className="border-4 p-2 rounded border-blue-hover"
+          />
+          <div className="flex justify-between text-sm mt-6">
+            <button className="bg-blue-button px-3 py-1 rounded" onClick={handleDownload}>
               Download
             </button>
-            <button 
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleRun}
-            >
+            <button className="bg-blue-button px-3 py-1 rounded" onClick={handleRun}>
               Submit & Run
             </button>
           </div>
         </div>
+
         <div className="text-sm">
-          <div className='flex flex-col items-center'>
-            <p className='font-bold'>
-            Select the input Parameters
-            </p>
-            <div className='bg-blue-hover px-5 py-3 mt-2 rounded-xl'>
-              {inputs.map(input => (
-                <div key={input.id} className="flex flex-col items-center">
-                  <label htmlFor={input.id} className="block mb-2">
-                    <pre className='font-serif'>
-                      <span>{input.min} ≤ </span> {input.label} <span> ≤  {input.max} </span>
-                    </pre>
-                  </label>
-                  <div className="flex flex-row items-center">
-                    <input
-                      type="number"
-                      id={input.id}
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={input.value}
-                      onChange={(e) => handleInputChange(input.id, e.target.value)}
-                      className="w-16 text-center border border-gray-300 rounded-lg py-1 focus:outline-none focus:border-blue-500"
-                    />
-                    <input
-                      type="range"
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={input.value}
-                      onChange={(e) => handleInputChange(input.id, e.target.value)}
-                      className="flex-grow ml-2 "
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-col">
-            <button onClick={handleGenerateCode} className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-10">
-              Generate Code
-            </button>
-          </div>
-        </div>
-      </div>
-       {loading && <SphereLoading/>}
-        {!loading && showImages && (
-          <div className=' mt-5 flex flex-col space-y-2'>
-            {imageUrls.map((url, index) => (
-              <img key={index} src={url} alt={`Output ${index + 1}`}/>
+          <p className="font-bold text-center">Select the input Parameters</p>
+          <div className="bg-blue-hover px-5 py-3 mt-2 rounded-xl">
+            {inputs.map(input => (
+              <div key={input.id} className="flex flex-col items-center">
+                <pre>{input.min} ≤ {input.label} ≤ {input.max}</pre>
+                <input
+                  type="number"
+                  value={input.value}
+                  min={input.min}
+                  max={input.max}
+                  step={input.step}
+                  onChange={e => handleInputChange(input.id, e.target.value)}
+                  className="w-20 text-center border rounded"
+                />
+                <input
+                  type="range"
+                  value={input.value}
+                  min={input.min}
+                  max={input.max}
+                  step={input.step}
+                  onChange={e => handleInputChange(input.id, e.target.value)}
+                  className="w-full"
+                />
+              </div>
             ))}
           </div>
-        )}
+          <button
+            onClick={handleGenerateCode}
+            className="bg-blue-button px-3 py-1 rounded mt-6"
+          >
+            Generate Code
+          </button>
+        </div>
+      </div>
+
+      {plots && (
+        <div className="space-y-4">
+          <Line data={chart("Desired vs RLS Output", plots.d.map((v, i) => v))} />
+          <Line data={chart("Error Signal", plots.e)} />
+          <Line data={chart("Norm of Weight Vector", plots.wNorm)} />
+        </div>
+      )}
     </div>
   );
-}
+};
 
-export default RMS
+export default RMS;
