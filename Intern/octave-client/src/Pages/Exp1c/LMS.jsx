@@ -1,145 +1,225 @@
-import React, { useState } from 'react';
-import axios from 'axios';
-import image from '../../image.png';
+import React, { useState } from "react";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+} from "chart.js";
 
-const LMS = () => {
-  const [inputs, setInputs] = useState([
-    { id: 'step-size', label: 'Step-size', min: 0, max: 1, step: 0.0001, value: 0.5 },
-    { id: 'order', label: 'Order of Filter (M)', min: 2, max: 100, step: 1, value: 50 },
-    { id: 'experiment', label: 'No.of iterations', min: 10, max: 1000, step: 1, value: 50 }
-  ]);
-
-  const [code, setCode] = useState('');
-  const [codeHtml, setCodeHtml] = useState('Code will be generated here.!');
-  const [imageUrls, setImageUrls] = useState(new Array(1).fill(image));
-  const [loading, setLoading] = useState(false);
-  const [showImages, setShowImages] = useState(false);
-
-
-  const handleInputChange = (id, value) => {
-    const input = inputs.find(input => input.id === id);
-    const newValue = Math.min(Math.max(value, input.min), input.max);
-    setInputs(inputs.map(input => input.id === id ? { ...input, value: newValue } : input));
-  };
-
-
-  const handleGenerateCode = () => {
-    const generatedCode = `
-function lms_nonstationary(n,M,mu,uniqueIdentifier)
- %n = 1000;
- x = randn(n, 1);
- d = sin(0.01 * (1:n)') + 0.5 * randn(n, 1);
- % non-stationary signal
- % LMS parameters 
-%mu = 0.01; 
-%M = 4; 
-% Initialize variables 
-w = zeros(M, 1); 
-y = zeros(n, 1);
- e = zeros(n, 1);
- w_hist = zeros(n, M); 
-% LMS algorithm 
-for i = M:n 
-x_vec = x(i:-1:i-M+1);
- y(i) = w' * x_vec; 
-e(i) = d(i) - y(i);
- w = w + mu * x_vec * e(i);
- w_hist(i, :) = w'; 
-end
- % Plot results 
-figure; 
-subplot(3, 1, 1); plot(d, 'DisplayName', 'Desired signal'); 
-hold on;
- plot(y, 'DisplayName', 'LMS output'); 
-legend;
- title('LMS Output vs Desired Signal'); 
-subplot(3, 1, 2); plot(e, 'DisplayName', 'Error');
- legend; 
-title('Error Signal'); subplot(3, 1, 3); plot(vecnorm(w_hist, 2, 2), 'DisplayName', 'Norm of weight vector');
- legend; 
-title('Norm of Weight Vector');
-saveas(gcf, sprintf('Outputs/lms_nonstationary_%s.png', uniqueIdentifier));
-close(gcf);
-end
- `;
-    setCode(generatedCode);
-    setCodeHtml(`<pre>${generatedCode}</pre>`);
-  };
-
-  const handleRun = async () => {
-  setLoading(true);  // Start loading
-  setShowImages(false);  // Hide images until new ones are loaded
-  const data = {
-    n:inputs.find(input=>input.id === 'experiment').value,
-    M: inputs.find(input => input.id === 'order').value,
-    mu: inputs.find(input => input.id === 'step-size').value
-  };
-
-  try {
-    const response = await axios.post('http://localhost:5000/lms_nonstationary-process', data, {
-      headers: {
-        // 'Content-Type': 'multipart/form-data'
-      }
-    });
-    
-    setImageUrls(response.data.images.map(img => `http://localhost:5000${img}`));
-    setShowImages(true);  // Show images after loading
-  } catch (error) {
-    console.error('Error running the script:', error);
-  } finally {
-    setLoading(false);  // Stop loading
-  }
-};
-  
-  const handleDownload = () => {
-    const element = document.createElement("a");
-    const file = new Blob([code], { type: 'text/plain' });
-    element.href = URL.createObjectURL(file);
-    element.download = "rls_denoise.m";
-    document.body.appendChild(element); // Required for this to work in FireFox
-    element.click();
-  };
-
-  const SphereLoading = () => (
-  <div className="flex felx-col fixed inset-0 flex items-center justify-center bg-white bg-opacity-50 ">
-    <div className="w-20 h-10">
-      <div className="relative w-full h-full overflow-hidden p-2 pl-3">
-        <p className='font-sans text-sm font-bold'>Loading...</p>
-        <div className="absolute inset-0 bg-blue-button rounded-lg animate-pulse opacity-0 text-black">
-        </div>
-        
-      </div>
-    </div>
-  </div>  
+ChartJS.register(
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
 );
 
+const LMS = () => {
+  /* ---------- Inputs ---------- */
+  const [inputs, setInputs] = useState([
+    { id: "n", label: "No. of iterations", min: 10, max: 1000, step: 1, value: 500 },
+    { id: "M", label: "Order of Filter (M)", min: 2, max: 100, step: 1, value: 10 },
+    { id: "mu", label: "Step size (μ)", min: 0.001, max: 1, step: 0.001, value: 0.05 }
+  ]);
+
+  const [desired, setDesired] = useState([]);
+  const [output, setOutput] = useState([]);
+  const [error, setError] = useState([]);
+  const [weightNorm, setWeightNorm] = useState([]);
+  const [showPlot, setShowPlot] = useState(false);
+  const [code, setCode] = useState("");
+
+  /* ---------- Input Handler ---------- */
+  const handleInputChange = (id, value) => {
+    setInputs(prev =>
+      prev.map(i => (i.id === id ? { ...i, value: Number(value) } : i))
+    );
+  };
+
+  /* ---------- Gaussian randn ---------- */
+  const randn = () => {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  };
+
+  /* ---------- LMS Non-Stationary ---------- */
+  const handleRun = () => {
+    const n = inputs.find(i => i.id === "n").value;
+    const M = inputs.find(i => i.id === "M").value;
+    const mu = inputs.find(i => i.id === "mu").value;
+
+    const x = Array.from({ length: n }, randn);
+    const d = Array.from({ length: n }, (_, i) =>
+      Math.sin(0.01 * (i + 1)) + 0.5 * randn()
+    );
+
+    let w = Array(M).fill(0);
+    let y = Array(n).fill(0);
+    let e = Array(n).fill(0);
+    let wHist = Array.from({ length: n }, () => Array(M).fill(0));
+
+    for (let i = M - 1; i < n; i++) {
+      const xVec = [];
+      for (let k = 0; k < M; k++) {
+        xVec.push(x[i - k]);
+      }
+
+      y[i] = w.reduce((sum, wi, idx) => sum + wi * xVec[idx], 0);
+      e[i] = d[i] - y[i];
+
+      for (let k = 0; k < M; k++) {
+        w[k] = w[k] + mu * xVec[k] * e[i];
+      }
+
+      wHist[i] = [...w];
+    }
+
+    const wNorm = wHist.map(wv =>
+      Math.sqrt(wv.reduce((s, v) => s + v * v, 0))
+    );
+
+    setDesired(d);
+    setOutput(y);
+    setError(e);
+    setWeightNorm(wNorm);
+    setShowPlot(true);
+  };
+
+  /* ---------- Generate MATLAB Code ---------- */
+  const handleGenerateCode = () => {
+    const matlabCode = `
+function randn() {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
+
+  function dot(a, b) {
+    return a.reduce((sum, val, i) => sum + val * b[i], 0);
+  }
+
+  function norm2(vec) {
+    return Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
+  }
+
+  /* ------------------ Signal Generation ------------------ */
+  const x = Array.from({ length: n }, () => randn());
+
+  const d = Array.from({ length: n }, (_, i) =>
+    Math.sin(0.01 * (i + 1)) + 0.5 * randn()
+  );
+
+  /* ------------------ Initialization ------------------ */
+  let w = Array(M).fill(0);
+  const y = Array(n).fill(0);
+  const e = Array(n).fill(0);
+  const w_hist = Array.from({ length: n }, () => Array(M).fill(0));
+
+  /* ------------------ LMS Algorithm ------------------ */
+  for (let i = M - 1; i < n; i++) {
+    const x_vec = [];
+    for (let k = 0; k < M; k++) {
+      x_vec.push(x[i - k]);
+    }
+
+    y[i] = dot(w, x_vec);
+    e[i] = d[i] - y[i];
+
+    for (let k = 0; k < M; k++) {
+      w[k] = w[k] + mu * x_vec[k] * e[i];
+    }
+
+    w_hist[i] = [...w];
+  }
+
+  /* ------------------ Weight Norm ------------------ */
+  const w_norm = w_hist.map(wi => norm2(wi));
+
+  /* ------------------ Return Plot Data ------------------ */
+  return {
+    uniqueIdentifier,
+    desiredSignal: d,
+    lmsOutput: y,
+    errorSignal: e,
+    weightNorm: w_norm,
+  };
+}
+`;
+    setCode(matlabCode);
+  };
+
+  /* ---------- Download ---------- */
+  const handleDownload = () => {
+    if (!code) {
+    alert("Please generate the code first.");
+    return;
+  }
+    const blob = new Blob([code], { type: "text/plain" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "lms_nonstationary.m";
+    link.click();
+  };
+
+  /* ---------- Chart Config ---------- */
+  const makeChart = (label, data) => ({
+    labels: data.map((_, i) => i + 1),
+    datasets: [
+      {
+        label,
+        data,
+        borderColor: "#6ec1ff",
+        borderWidth: 1.5,
+        pointRadius: 0
+      }
+    ]
+  });
+
   return (
-    <div className='flex flex-col space-y-10'>
-      <div className="flex flex-row gap-5 space-x-5 justify-between"> 
-        <div className='flex flex-col'>
-          <iframe
-            srcDoc={codeHtml}
-            title="Generated Code"
-            width="650"
-            height="232"
-            className='outline border-4 p-2 rounded-sm border-blue-hover'
-          ></iframe>
-          <div className='flex justify-between text-sm'>
-            <button 
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleDownload}
-            >
-              Download
-            </button>
-            <button 
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleRun}
-            >
-              Submit & Run
-            </button>
-          </div>
+    <div className="flex flex-row gap-6">
+
+      {/* LEFT */}
+      <div className="flex flex-col space-y-4">
+        <iframe
+          title="Generated Code"
+          srcDoc={`<pre>${code || "Click Generate Code"}</pre>`}
+          width="800"
+          height="260"
+          className="border-4 rounded border-blue-400 p-2"
+        />
+
+        <div className="flex justify-between">
+          <button onClick={handleGenerateCode} className="bg-blue-button px-3 py-1 rounded">
+            Generate Code
+          </button>
+          <button onClick={handleDownload} className="bg-blue-button px-3 py-1 rounded">
+            Download
+          </button>
+          <button onClick={handleRun} className="bg-blue-button px-3 py-1 rounded">
+            Submit & Run
+          </button>
         </div>
-        <div className="text-sm">
+
+        {showPlot && (
+          <>
+            <Line data={makeChart("Desired Signal", desired)} />
+            <Line data={makeChart("LMS Output", output)} />
+            <Line data={makeChart("Error Signal", error)} />
+            <Line data={makeChart("Norm of Weight Vector", weightNorm)} />
+          </>
+        )}
+      </div>
+
+      {/* RIGHT */}
+     <div className="text-sm">
           <div className='flex flex-col items-center'>
             <p className='font-bold'>
             Select the input Parameters
@@ -177,22 +257,8 @@ end
               ))}
             </div>
           </div>
-          <div className="flex flex-col">
-            <button onClick={handleGenerateCode} className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-10">
-              Generate Code
-            </button>
-          </div>
-        </div>
-      </div>
-       {loading && <SphereLoading/>}
-        {!loading && showImages && (
-          <div className=' mt-5 flex flex-col space-y-2'>
-            {imageUrls.map((url, index) => (
-              <img key={index} src={url} alt={`Output ${index + 1}`}/>
-            ))}
-          </div>
-        )}
-    </div>
+              </div>
+              </div>
   );
 };
 
