@@ -1,221 +1,375 @@
-import axios from 'axios';
-import React, { useState } from 'react';
-import image from '../../image.png';
+import React, { useState } from "react";
+import image from "../../image.png";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+} from "chart.js";
+
+ChartJS.register(
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+);
 
 function Simulation() {
+  /* ================= INPUT STATE ================= */
   const [inputs, setInputs] = useState([
-    { id: 'A00', label: 'state_transition_matrix_00', min: -1, max: 1, step: 0.01, value: 0 },
-    { id: 'A01', label: 'state_transition_matrix_01', min: -1, max: 1, step: 0.01, value: 0 },
-    { id: 'A10', label: 'state_transition_matrix_10', min: -1, max: 1, step: 0.01, value: 0 },
-    { id: 'A11', label: 'state_transition_matrix_11', min: -1, max: 1, step: 0.01, value: 0 },
-    { id: 'x0', label: 'true_state_00', min: -1, max: 1, step: 0.001, value: 0.01 },
-    { id: 'x1', label: 'true_state_01', min: -1, max:1, step: 0.001, value: 0.01 },
-    { id: 'num_steps', label: 'No.of time steps', min: 10, max: 100, step: 1, value: 5 },
-    { id: 'x0_est_0', label: 'initial_state_estimate_00', min: -1, max: 1, step: 0.001, value: 1 },
-    { id: 'x0_est_1', label: 'initial_state_estimate_01', min: -1, max: 1, step: 0.001, value: 1 }
+    { id: "A00", label: "state_transition_matrix_00", min: -1, max: 1, step: 0.01, value: 1 },
+    { id: "A01", label: "state_transition_matrix_01", min: -1, max: 1, step: 0.01, value: 1 },
+    { id: "A10", label: "state_transition_matrix_10", min: -1, max: 1, step: 0.01, value: 0 },
+    { id: "A11", label: "state_transition_matrix_11", min: -1, max: 1, step: 0.01, value: 1 },
+    { id: "x0", label: "true_state_00", min: -1, max: 1, step: 0.001, value: 0 },
+    { id: "x1", label: "true_state_01", min: -1, max: 1, step: 0.001, value: 1 },
+    { id: "num_steps", label: "No.of time steps", min: 10, max: 100, step: 1, value: 50 },
+    { id: "x0_est_0", label: "initial_state_estimate_00", min: -1, max: 1, step: 0.001, value: 0 },
+    { id: "x0_est_1", label: "initial_state_estimate_01", min: -1, max: 1, step: 0.001, value: 0 }
   ]);
 
-  const [code, setCode] = useState('');
-  const [codeHtml, setCodeHtml] = useState('Code will be generated here.!');
-  const [imageUrls, setImageUrls] = useState(new Array(5).fill(image));
-  const [loading, setLoading] = useState(false);
-  const [showImages, setShowImages] = useState(false);
-
-
+  const [plots, setPlots] = useState(null);
+  const [codeHtml, setCodeHtml] = useState("Code will be generated here.!");
+  const [codeText, setCodeText] = useState("");
 
   const handleInputChange = (id, value) => {
-    setInputs(inputs.map(input => 
-      input.id === id ? { ...input, value: Math.min(Math.max(value, input.min), input.max) } : input
+    setInputs(inputs.map(input =>
+      input.id === id
+        ? { ...input, value: Math.min(Math.max(value, input.min), input.max) }
+        : input
     ));
   };
 
+  /* ================= MATRIX HELPERS (MATLAB IDENTICAL) ================= */
+  const matMul = (A, B) => [
+    [
+      A[0][0]*B[0][0] + A[0][1]*B[1][0],
+      A[0][0]*B[0][1] + A[0][1]*B[1][1]
+    ],
+    [
+      A[1][0]*B[0][0] + A[1][1]*B[1][0],
+      A[1][0]*B[0][1] + A[1][1]*B[1][1]
+    ]
+  ];
 
+  const matAdd = (A, B) => [
+    [A[0][0]+B[0][0], A[0][1]+B[0][1]],
+    [A[1][0]+B[1][0], A[1][1]+B[1][1]]
+  ];
+
+  const matSub = (A, B) => [
+    [A[0][0]-B[0][0], A[0][1]-B[0][1]],
+    [A[1][0]-B[1][0], A[1][1]-B[1][1]]
+  ];
+
+  const matTrans = A => [
+    [A[0][0], A[1][0]],
+    [A[0][1], A[1][1]]
+  ];
+
+  const matInv2 = M => {
+    const det = M[0][0]*M[1][1] - M[0][1]*M[1][0];
+    return [
+      [ M[1][1]/det, -M[0][1]/det ],
+      [ -M[1][0]/det, M[0][0]/det ]
+    ];
+  };
+
+  const matVecMul = (A, x) => [
+    A[0][0]*x[0] + A[0][1]*x[1],
+    A[1][0]*x[0] + A[1][1]*x[1]
+  ];
+
+  /* ================= GENERATE CODE ================= */
   const handleGenerateCode = () => {
-    const generatedCode = `function kalman_filter_simulation(A, x0, num_steps, x0_est)
-    % Define the measurement matrix, process noise covariance, and measurement noise covariance
-    C = eye(2);            % Measurement matrix (identity matrix)
-    Q = 1e-6 * eye(2);     % Small process noise covariance
-    R = zeros(2);          % Measurement noise covariance (noiseless)
+    const code = `function kalmanFilterSimulation(A, x0, num_steps, x0_est, uniqueIdentifier = "default") {
+  // Fixed parameters (same as MATLAB)
+  const C = [[1, 0], [0, 1]];           // Measurement matrix: identity
+  const Q = [[1e-6, 0], [0, 1e-6]];     // Process noise covariance
+  const R = [[0, 0], [0, 0]];           // Measurement noise: zero (noiseless)
 
-    % Initialize true state and measurements
-    x_true = zeros(2, num_steps); % True state
-    y_meas = zeros(2, num_steps); % Measurements
-    u = zeros(1, num_steps);      % Control input (zero for unforced dynamic model)
+  // Initialize arrays
+  const x_true = Array(num_steps).fill().map(() => [0, 0]);
+  const y_meas = Array(num_steps).fill().map(() => [0, 0]);
+  const x_est  = Array(num_steps).fill().map(() => [0, 0]);
 
-    % Initial true state
-    x_true(:, 1) = x0; 
+  const time = Array.from({ length: num_steps }, (_, i) => i + 1);
 
-    % Simulate the system (unforced dynamic model)
-    for k = 2:num_steps
-        x_true(:, k) = A * x_true(:, k-1); % True state evolution (no control input)
-        y_meas(:, k) = C * x_true(:, k);   % Measurements
-    end
+  // Initial true state
+  x_true[0] = [...x0];
+  y_meas[0] = [...x0]; // Though not used in filter loop
 
-    % Kalman filter initial conditions
-    x_est = zeros(2, num_steps); % Estimated state
-    P = eye(2);                  % Initial error covariance
-    x_est(:, 1) = x0_est;        % Initial state estimate
+  // Simulate true system (unforced: x_k = A * x_{k-1})
+  for (let k = 1; k < num_steps; k++) {
+    x_true[k] = matVecMul(A, x_true[k - 1]);
+    y_meas[k] = matVecMul(C, x_true[k]); // C is identity → same as x_true[k]
+  }
 
-    % Kalman filter implementation
-    for k = 2:num_steps
-        % Prediction step (unforced dynamic model)
-        x_pred = A * x_est(:, k-1);         % Predicted state (no control input)
-        P_pred = A * P * A' + Q;            % Predicted error covariance
+  // Kalman filter initialization
+  x_est[0] = [...x0_est];
+  let P = [[1, 0], [0, 1]]; // Initial error covariance
 
-        % Update step (using Kalman filter equations)
-        K = P_pred * C' / (C * P_pred * C' + R); % Kalman gain
-        x_est(:, k) = x_pred + K * (y_meas(:, k) - C * x_pred); % Updated state estimate
-        P = (eye(2) - K * C) * P_pred;      % Updated error covariance
-    end
+  // Kalman filter loop
+  for (let k = 1; k < num_steps; k++) {
+    // Prediction step
+    const x_pred = matVecMul(A, x_est[k - 1]);
+    const P_pred = matAdd(matMul(matMul(A, P), matTrans(A)), Q);
 
-    % Plot results
-    figure;
-    subplot(2, 1, 1);
-    plot(1:num_steps, x_true(1, :), 'g', 1:num_steps, x_est(1, :), 'b--');
-    legend('True State', 'Estimated State');
-    title('State 1');
-    xlabel('Time step');
-    ylabel('State value');
+    // Kalman gain
+    const S = matAdd(matMul(matMul(C, P_pred), matTrans(C)), R);
+    const K = matMul(matMul(P_pred, matTrans(C)), matInv2x2(S));
 
-    subplot(2, 1, 2);
-    plot(1:num_steps, x_true(2, :), 'g', 1:num_steps, x_est(2, :), 'b--');
-    legend('True State', 'Estimated State');
-    title('State 2');
-    xlabel('Time step');
-    ylabel('State value');
-end
+    // Innovation (measurement residual)
+    const innovation = [
+      y_meas[k][0] - x_pred[0],
+      y_meas[k][1] - x_pred[1]
+    ];
 
-A = [1 1; 0 1];          % State transition matrix
-x0 = [0; 1];             % Initial true state
-num_steps = 50;          % Number of time steps
-x0_est = [0; 0];         % Initial state estimate
+    // Update state estimate
+    x_est[k] = [
+      x_pred[0] + K[0][0] * innovation[0] + K[0][1] * innovation[1],
+      x_pred[1] + K[1][0] * innovation[0] + K[1][1] * innovation[1]
+    ];
 
-kalman_filter_simulation(A, x0, num_steps, x0_est);
-    `;
-    setCode(generatedCode);
-    setCodeHtml(`<pre>${generatedCode}</pre>`);
+    // Update covariance
+    const I = [[1, 0], [0, 1]];
+    P = matMul(matSub(I, matMul(K, C)), P_pred);
+  }
+
+  // Return results
+  return {
+    time,
+    x_true,     // True states over time
+    x_est,      // Estimated states over time
+    uniqueIdentifier
+  };
+}
+
+// ==================== Matrix Helper Functions ====================
+
+function matMul(A, B) {
+  return [
+    [
+      A[0][0] * B[0][0] + A[0][1] * B[1][0],
+      A[0][0] * B[0][1] + A[0][1] * B[1][1]
+    ],
+    [
+      A[1][0] * B[0][0] + A[1][1] * B[1][0],
+      A[1][0] * B[0][1] + A[1][1] * B[1][1]
+    ]
+  ];
+}
+
+function matAdd(A, B) {
+  return [
+    [A[0][0] + B[0][0], A[0][1] + B[0][1]],
+    [A[1][0] + B[1][0], A[1][1] + B[1][1]]
+  ];
+}
+
+function matSub(A, B) {
+  return [
+    [A[0][0] - B[0][0], A[0][1] - B[0][1]],
+    [A[1][0] - B[1][0], A[1][1] - B[1][1]]
+  ];
+}
+
+function matTrans(A) {
+  return [
+    [A[0][0], A[1][0]],
+    [A[0][1], A[1][1]]
+  ];
+}
+
+function matVecMul(A, v) {
+  return [
+    A[0][0] * v[0] + A[0][1] * v[1],
+    A[1][0] * v[0] + A[1][1] * v[1]
+  ];
+}
+
+function matInv2x2(M) {
+  const det = M[0][0] * M[1][1] - M[0][1] * M[1][0];
+  if (Math.abs(det) < 1e-10) throw new Error("Matrix is singular");
+  return [
+    [ M[1][1] / det, -M[0][1] / det ],
+    [ -M[1][0] / det, M[0][0] / det ]
+  ];
+}
+
+// ==================== Example Usage ====================
+
+// Example parameters
+const A = [
+  [1, 1],
+  [0, 1]
+];
+const x0 = [0, 1];
+const num_steps = 50;
+const x0_est = [0, 0]; // Wrong initial guess
+const result = kalmanFilterSimulation(A, x0, num_steps, x0_est, "example1");
+
+// Log some results
+console.log("Time:", result.time.slice(0, 5));
+console.log("True State (first 5):", result.x_true.slice(0, 5));
+console.log("Estimated State (first 5):", result.x_est.slice(0, 5));`;
+    setCodeHtml(`<pre>${code}</pre>`);
+    setCodeText(code);
   };
 
-  const handleRun = async () => {
-    setLoading(true);
-    setShowImages(false);
-    const data = {
-      A_octave: [[inputs.find(input => input.id === 'A00').value,inputs.find(input => input.id === 'A01').value],[inputs.find(input => input.id === 'A10').value,inputs.find(input => input.id === 'A11').value]],
-      x0: [inputs.find(input => input.id === 'x0').value, inputs.find(input => input.id === 'x1').value],
-      num_steps: inputs.find(input => input.id === 'num_steps').value,
-      x0_est:[inputs.find(input => input.id === 'x0_est_0').value,inputs.find(input => input.id === 'x0_est_1').value]
-    };
-
-    try {
-      const response = await axios.post('http://localhost:5000/Simulation', data);
-      setImageUrls(response.data.images.map(img => `http://localhost:5000${img}`));
-      setShowImages(true);
-    } catch (error) {
-      console.error('Error running the script:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  /* ================= DOWNLOAD FUNCTION ================= */
   const handleDownload = () => {
+    if (!codeText) {
+      alert("Please generate the code first.");
+      return;
+    }
     const element = document.createElement("a");
-    const file = new Blob([code], { type: 'text/plain' });
+    const file = new Blob([codeText], { type: "text/plain" });
     element.href = URL.createObjectURL(file);
     element.download = "kalmanFilterSimulation.m";
     document.body.appendChild(element);
     element.click();
   };
 
-  const SphereLoading = () => (
-    <div className="flex fixed inset-0 items-center justify-center bg-white bg-opacity-50">
-      <div className="w-20 h1">
-        <div className="relative w-full h-full overflow-hidden p-2 pl-3">
-          <p className="font-sans text-sm font-semibold">Loading...</p>
-          <div className="absolute inset-0 bg-blue-button rounded-lg animate-pulse opacity-0 text-black"></div>
-        </div>
-      </div>
-    </div>
-  );
+  /* ================= RUN FUNCTION ================= */
+  const handleRunChecked = () => {
+    if (!codeText) {
+      alert("Please generate the code first.");
+      return;
+    }
 
+    const A = [
+      [inputs.find(i=>i.id==="A00").value, inputs.find(i=>i.id==="A01").value],
+      [inputs.find(i=>i.id==="A10").value, inputs.find(i=>i.id==="A11").value]
+    ];
+    const C = [[1,0],[0,1]];
+    const Q = [[1e-6,0],[0,1e-6]];
+    const R = [[0,0],[0,0]];
+    const I = [[1,0],[0,1]];
+    const N = inputs.find(i=>i.id==="num_steps").value;
+
+    const xTrue = Array(N).fill(0).map(()=>[0,0]);
+    const yMeas = Array(N).fill(0).map(()=>[0,0]);
+    const xEst  = Array(N).fill(0).map(()=>[0,0]);
+
+    xTrue[0] = [
+      inputs.find(i=>i.id==="x0").value,
+      inputs.find(i=>i.id==="x1").value
+    ];
+    xEst[0] = [
+      inputs.find(i=>i.id==="x0_est_0").value,
+      inputs.find(i=>i.id==="x0_est_1").value
+    ];
+
+    let P = [[1,0],[0,1]];
+
+    // TRUE SYSTEM
+    for(let k=1;k<N;k++){
+      xTrue[k] = matVecMul(A, xTrue[k-1]);
+      yMeas[k] = [...xTrue[k]];
+    }
+
+    // KALMAN FILTER
+    for(let k=1;k<N;k++){
+      const xPred = matVecMul(A, xEst[k-1]);
+      const PPred = matAdd(matMul(matMul(A,P), matTrans(A)), Q);
+      const S = matAdd(matMul(matMul(C,PPred), matTrans(C)), R);
+      const K = matMul(matMul(PPred, matTrans(C)), matInv2(S));
+      const innovation = [yMeas[k][0]-xPred[0], yMeas[k][1]-xPred[1]];
+      xEst[k] = [
+        xPred[0]+K[0][0]*innovation[0]+K[0][1]*innovation[1],
+        xPred[1]+K[1][0]*innovation[0]+K[1][1]*innovation[1]
+      ];
+      P = matMul(matSub(I, matMul(K,C)), PPred);
+    }
+
+    setPlots({ xt: xTrue, x: xEst });
+  };
+
+  /* ================= UI (UNCHANGED) ================= */
   return (
-      <div className="flex flex-row gap-5 space-x-5">
-    <div className="flex flex-col space-y1">
-        <div className="flex flex-col">
-          <iframe
-            srcDoc={codeHtml}
-            title="Generated Code"
-            width="750"
-            height="300"
-            className="outline border-4 p-2 rounded-sm border-blue-hover"
-          ></iframe>
-          <div className="flex justify-between text-sm">
-            <button
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleDownload}
-            >
-              Download
-            </button>
-            <button
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleRun}
-            >
-              Submit & Run
-            </button>
-          </div>
+    <div className="flex flex-row gap-5 space-x-5">
+      <div className="flex flex-col space-y1">
+        <iframe
+          srcDoc={codeHtml}
+          title="Generated Code"
+          width="750"
+          height="300"
+          className="outline border-4 p-2 rounded-sm border-blue-hover"
+        />
+
+        <div className="flex justify-between text-sm">
+          <button className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8" onClick={handleDownload}>
+            Download
+          </button>
+          <button className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8" onClick={handleRunChecked}>
+            Submit & Run
+          </button>
+          <button className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8" onClick={handleGenerateCode}>
+            Generate Code
+          </button>
         </div>
-        {loading && <SphereLoading />}
-      {!loading && showImages && (
-        <div className="grid grid-cols-1">
-          {imageUrls.map((url, index) => (
-            <img key={index} src={url} alt={`Output ${index + 1}`} />
+
+        {plots && (
+          <div className="grid grid-cols-1 gap-6">
+            <Line
+              data={{
+                labels: plots.xt.map((_,i)=>i+1),
+                datasets: [
+                  { label:"True State", data:plots.xt.map(v=>v[0]), borderColor:"green", pointRadius:0 },
+                  { label:"Estimated State", data:plots.x.map(v=>v[0]), borderColor:"blue", borderDash:[5,5], pointRadius:0 }
+                ]
+              }}
+            />
+            <Line
+              data={{
+                labels: plots.xt.map((_,i)=>i+1),
+                datasets: [
+                  { label:"True State", data:plots.xt.map(v=>v[1]), borderColor:"green", pointRadius:0 },
+                  { label:"Estimated State", data:plots.x.map(v=>v[1]), borderColor:"blue", borderDash:[5,5], pointRadius:0 }
+                ]
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="text-sm">
+        <p className="font-semibold text-center">Select the input Parameters</p>
+        <div className="bg-blue-hover px-5 py-3 mt-2 rounded-xl">
+          {inputs.map(input => (
+            <div key={input.id} className="flex flex-col items-center">
+              <pre>{input.min} ≤ {input.label} ≤ {input.max}</pre>
+              <div className="flex flex-row items-center">
+                <input
+                  type="number"
+                  value={input.value}
+                  step={input.step}
+                  min={input.min}
+                  max={input.max}
+                  onChange={e=>handleInputChange(input.id, Number(e.target.value))}
+                  className="w-16 text-center border rounded-lg"
+                />
+                <input
+                  type="range"
+                  min={input.min}
+                  max={input.max}
+                  step={input.step}
+                  value={input.value}
+                  onChange={e=>handleInputChange(input.id, Number(e.target.value))}
+                  className="flex-grow ml-2"
+                />
+              </div>
+            </div>
           ))}
         </div>
-      )}
-
       </div>
-      
-        <div className="text-sm">
-          <div className="flex flex-col items-center">
-            <p className="font-semibold">Select the input Parameters</p>
-            <div className="bg-blue-hover px-5 py-3 mt-2 rounded-xl">
-              {inputs.map(input => (
-                <div key={input.id} className="flex flex-col items-center">
-                  <label htmlFor={input.id} className="block mb-2">
-                    <pre className="font-serif">
-                      <span>{input.min} ≤ </span> {input.label} <span> ≤ {input.max}</span>
-                    </pre>
-                  </label>
-                  <div className="flex flex-row items-center">
-                    <input
-                      type="number"
-                      id={input.id}
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={input.value}
-                      onChange={(e) => handleInputChange(input.id, parseFloat(e.target.value))}
-                      className="w-16 text-center border border-gray-300 rounded-lg py-1 focus:outline-none focus:border-blue-0"
-                    />
-                    <input
-                      type="range"
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={input.value}
-                      onChange={(e) => handleInputChange(input.id, parseFloat(e.target.value))}
-                      className="flex-grow ml-2"
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-col mt-5">
-            <button onClick={handleGenerateCode} className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt1">
-              Generate Code
-            </button>
-          </div>
-        </div>
     </div>
   );
 }
