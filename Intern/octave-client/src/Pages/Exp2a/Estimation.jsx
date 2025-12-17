@@ -35,6 +35,7 @@ function Estimation() {
 
   /* -------- MATLAB randn -------- */
   const randn = () => {
+   
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
     while (v === 0) v = Math.random();
@@ -51,6 +52,10 @@ function Estimation() {
 
   /* ================= KALMAN FILTER (MATLAB IDENTICAL) ================= */
   const handleRun = () => {
+    if (!code) {
+    alert("Please generate the code first.");
+    return;
+  }
     const N = inputs.find(i => i.id === "N").value;
     const dt = inputs.find(i => i.id === "dt").value;
     const u = inputs.find(i => i.id === "u").value;
@@ -138,9 +143,119 @@ P = [
   /* -------- MATLAB Code Generator -------- */
   const handleGenerateCode = () => {
     const matlabCode = `
-function kalmanFilterEstimation(N, dt, u, y0, v0, R)
-...
-end
+function kalmanFilterEstimation(N, dt, u, y0, v0, R) {
+
+  /* ---------- randn (MATLAB equivalent) ---------- */
+  const randn = () => {
+    let u1 = 0, u2 = 0;
+    while (u1 === 0) u1 = Math.random();
+    while (u2 === 0) u2 = Math.random();
+    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+  };
+
+  /* ---------- Time vector ---------- */
+  const t = Array.from({ length: N }, (_, i) => dt * (i + 1));
+
+  /* ---------- Matrices ---------- */
+  const F = [
+    [1, dt],
+    [0, 1]
+  ];
+
+  const G = [
+    -0.5 * dt * dt,
+    -dt
+  ];
+
+  const H = [1, 0];          // measurement matrix
+  const Q = [[0, 0], [0, 0]];
+
+  const x0 = [10, 0];
+  let P = [
+    [50, 0],
+    [0, 0.01]
+  ];
+
+  /* ---------- True states ---------- */
+  let xt = Array.from({ length: N }, () => [0, 0]);
+  xt[0] = [y0, v0];
+
+  for (let k = 1; k < N; k++) {
+    xt[k] = [
+      F[0][0] * xt[k - 1][0] + F[0][1] * xt[k - 1][1] + G[0] * u,
+      F[1][0] * xt[k - 1][0] + F[1][1] * xt[k - 1][1] + G[1] * u
+    ];
+  }
+
+  /* ---------- Measurements ---------- */
+  const z = xt.map(state => state[0] + Math.sqrt(R) * randn());
+
+  /* ---------- Kalman filter ---------- */
+  let x = Array.from({ length: N }, () => [0, 0]);
+  x[0] = x0;
+
+  for (let k = 1; k < N; k++) {
+
+    /* ---- Prediction ---- */
+    const xp = [
+      F[0][0] * x[k - 1][0] + F[0][1] * x[k - 1][1] + G[0] * u,
+      F[1][0] * x[k - 1][0] + F[1][1] * x[k - 1][1] + G[1] * u
+    ];
+
+    // Pp = F * P * F'
+    const Pp = [
+      [
+        F[0][0]*P[0][0]*F[0][0] + F[0][1]*P[1][0]*F[0][0] +
+        F[0][0]*P[0][1]*F[0][1] + F[0][1]*P[1][1]*F[0][1],
+
+        F[0][0]*P[0][0]*F[1][0] + F[0][1]*P[1][0]*F[1][0] +
+        F[0][0]*P[0][1]*F[1][1] + F[0][1]*P[1][1]*F[1][1]
+      ],
+      [
+        F[1][0]*P[0][0]*F[0][0] + F[1][1]*P[1][0]*F[0][0] +
+        F[1][0]*P[0][1]*F[0][1] + F[1][1]*P[1][1]*F[0][1],
+
+        F[1][0]*P[0][0]*F[1][0] + F[1][1]*P[1][0]*F[1][0] +
+        F[1][0]*P[0][1]*F[1][1] + F[1][1]*P[1][1]*F[1][1]
+      ]
+    ];
+
+    /* ---- Kalman Gain ---- */
+    const S = Pp[0][0] + R;
+    const K = [
+      Pp[0][0] / S,
+      Pp[1][0] / S
+    ];
+
+    /* ---- Update ---- */
+    const innovation = z[k] - xp[0];
+
+    x[k] = [
+      xp[0] + K[0] * innovation,
+      xp[1] + K[1] * innovation
+    ];
+
+    P = [
+      [(1 - K[0]) * Pp[0][0], (1 - K[0]) * Pp[0][1]],
+      [Pp[1][0] - K[1] * Pp[0][0], Pp[1][1] - K[1] * Pp[0][1]]
+    ];
+  }
+
+  /* ---------- Errors ---------- */
+  const posErr = x.map((v, i) => v[0] - xt[i][0]);
+  const velErr = x.map((v, i) => v[1] - xt[i][1]);
+
+  /* ---------- Return results ---------- */
+  return {
+    t,
+    z,
+    xt,
+    x,
+    posErr,
+    velErr
+  };
+}
+
 `;
     setCode(matlabCode);
     setCodeHtml(`<pre>${matlabCode}</pre>`);
