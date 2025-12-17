@@ -1,21 +1,31 @@
 import React, { useState } from 'react';
-import axios from 'axios';
-import image from '../../image.png';
+import { Line } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  Tooltip,
+  Legend
+} from 'chart.js';
 
-const LMS = () => {
+ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
+
+function LMS_AR() {
+
+  /* ================= INPUT STATE ================= */
   const [inputs, setInputs] = useState([
     { id: 'num-samples', label: 'Number of samples (N)', min: 10, max: 1000, step: 1, value: 500 },
     { id: 'u1', label: 'Initial value u1', min: 0, max: 1, step: 0.01, value: 0.5 },
     { id: 'u2', label: 'Initial value u2', min: 0, max: 1, step: 0.01, value: 1 },
-    { id: 'step-size', label: 'Step size (mu)', min: 0.001, max: 0.1, step: 0.001, value: 0.1 }
+    { id: 'step-size', label: 'Step size (mu)', min: 0.001, max: 0.1, step: 0.001, value: 0.1 },
+    { id: 'unique-id', label: 'Unique Identifier', min: 0, max: 9999, step: 1, value: 123 }
   ]);
 
-  const [code, setCode] = useState('');
+  const [plots, setPlots] = useState(null);
   const [codeHtml, setCodeHtml] = useState('Code will be generated here.!');
-  const [imageUrls, setImageUrls] = useState(new Array(1).fill(image));
-  const [loading, setLoading] = useState(false);
-  const [showImages, setShowImages] = useState(false);
-
+  const [code, setCode] = useState('');
 
   const handleInputChange = (id, value) => {
     const input = inputs.find(input => input.id === id);
@@ -23,218 +33,206 @@ const LMS = () => {
     setInputs(inputs.map(input => input.id === id ? { ...input, value: newValue } : input));
   };
 
+  /* ================= RUN LMS AR ================= */
+  const handleRun = () => {
+    if (!code) {
+      alert("Please generate the code first.");
+      return;
+    }
+
+    const N = inputs.find(i => i.id === 'num-samples').value;
+    const u_init = [inputs.find(i => i.id === 'u1').value, inputs.find(i => i.id === 'u2').value];
+    const mu = inputs.find(i => i.id === 'step-size').value;
+    const uniqueIdentifier = inputs.find(i => i.id === 'unique-id').value;
+
+    // --- Initialize ---
+    const v = Array.from({length: N}, () => Math.random()); // noise
+    const u = Array(N).fill(0);
+    const w_lms = Array.from({length: 2}, () => Array(N).fill(0));
+    const e = Array(N).fill(0);
+
+    u[0] = u_init[0];
+    u[1] = u_init[1];
+
+    // --- Generate AR process ---
+    for (let i = 2; i < N; i++) {
+      u[i] = 0.75 * u[i-1] - 0.5 * u[i-2] + v[i];
+    }
+
+    // --- Compute R and p ---
+    let R = [[0,0],[0,0]];
+    let p = [0,0];
+    for (let i = 1; i < N; i++) {
+      const x = [v[i], v[i-1]];
+      R[0][0] += x[0]*x[0]; R[0][1] += x[0]*x[1];
+      R[1][0] += x[1]*x[0]; R[1][1] += x[1]*x[1];
+      p[0] += x[0]*u[i]; p[1] += x[1]*u[i];
+    }
+    R = R.map(row => row.map(val => val/(N-1)));
+    p = p.map(val => val/(N-1));
+
+    // --- Solve w_opt = R \ p ---
+    const det = R[0][0]*R[1][1] - R[0][1]*R[1][0];
+    const R_inv = [
+      [ R[1][1]/det, -R[0][1]/det ],
+      [ -R[1][0]/det, R[0][0]/det ]
+    ];
+    const w_opt = [
+      R_inv[0][0]*p[0] + R_inv[0][1]*p[1],
+      R_inv[1][0]*p[0] + R_inv[1][1]*p[1]
+    ];
+
+    // --- LMS algorithm ---
+    w_lms[0][0] = 0; w_lms[1][0] = 0;
+    for (let i = 1; i < N; i++) {
+      e[i] = u[i] - (w_lms[0][i-1]*v[i] + w_lms[1][i-1]*v[i-1]);
+      w_lms[0][i] = w_lms[0][i-1] + mu * v[i] * e[i];
+      w_lms[1][i] = w_lms[1][i-1] + mu * v[i-1] * e[i];
+    }
+
+    setPlots({ e, w_lms, w_opt, N });
+  };
 
   const handleGenerateCode = () => {
-    const generatedCode = `
-    function lms_ar(N, u_init, mu)
-    % N: Number of samples
-    % u_init: Initial values of u [u(1), u(2)]
-    % mu: Step size for LMS algorithm
+    const generatedCode = `function lms_ar(N, u_init, mu) {
 
-    % Initialize random noise
-    v = rand(N, 1);
+  /* -------- Random Noise (v = rand(N,1)) -------- */
+  const v = Array.from({ length: N }, () => Math.random());
 
-    % Initialize u with given initial values
-    u = zeros(N, 1);
-    u(1) = u_init(1);
-    u(2) = u_init(2);
+  /* -------- Initialize u -------- */
+  const u = Array(N).fill(0);
+  u[0] = u_init[0];
+  u[1] = u_init[1];
 
-    % Generate autoregressive process
-    for i = 3:N
-        u(i) = 0.75 * u(i-1) - 0.5 * u(i-2) + v(i);
-    endfor
+  /* -------- Generate AR process -------- */
+  for (let i = 2; i < N; i++) {
+    u[i] = 0.75 * u[i - 1] - 0.5 * u[i - 2] + v[i];
+  }
 
-    % Calculate autocorrelation matrix R and cross-correlation vector p
-    R = zeros(2, 2);
-    p = zeros(2, 1);
+  /* -------- Compute R and p -------- */
+  let R = [
+    [0, 0],
+    [0, 0]
+  ];
+  let p = [0, 0];
 
-    for i = 2:N
-        x = [v(i); v(i-1)];
-        R = R + x * x';
-        p = p + x * u(i);
-    endfor
+  for (let i = 1; i < N; i++) {
+    const x = [v[i], v[i - 1]];
 
-    R = R / (N-1);
-    p = p / (N-1);
-    w_opt = R / p;
+    R[0][0] += x[0] * x[0];
+    R[0][1] += x[0] * x[1];
+    R[1][0] += x[1] * x[0];
+    R[1][1] += x[1] * x[1];
 
-    % Initialize LMS weights and error
-    w_lms = zeros(2, N);
-    e = zeros(N, 1);
+    p[0] += x[0] * u[i];
+    p[1] += x[1] * u[i];
+  }
 
-    % LMS algorithm
-    for i = 2:N
-        e(i) = u(i) - w_lms(:, i-1)' * [v(i); v(i-1)];
-        w_lms(:, i) = w_lms(:, i-1) + mu * [v(i); v(i-1)] * e(i);
-    endfor
+  R = R.map(row => row.map(val => val / (N - 1)));
+  p = p.map(val => val / (N - 1));
 
-    % Plot mean square error
-    figure(1)
-    plot(e.^2);
-    title('Mean Square Error vs Number of Iterations')
-    xlabel('Number of Iterations')
-    ylabel('Mean Square Error')
+  /* -------- Optimal weights (w_opt = inv(R) * p) -------- */
+  const det = R[0][0] * R[1][1] - R[0][1] * R[1][0];
+  const Rinv = [
+    [ R[1][1] / det, -R[0][1] / det ],
+    [ -R[1][0] / det, R[0][0] / det ]
+  ];
 
-    % Plot random walk of w1
-    figure(2)
-    plot(1:N, w_lms(1, :));
-    hold on
-    plot(1:N, ones(1, N) * w_opt(1))
-    title('Random Walk of w1')
-    xlabel('Number of Iterations')
-    ylabel('w1')
-    legend('Estimated w1', 'Optimal w1')
-    hold off
+  const w_opt = [
+    Rinv[0][0] * p[0] + Rinv[0][1] * p[1],
+    Rinv[1][0] * p[0] + Rinv[1][1] * p[1]
+  ];
 
-    % Plot random walk of w2
-    figure(3)
-    plot(1:N, w_lms(2, :));
-    hold on
-    plot(1:N, ones(1, N) * w_opt(2))
-    title('Random Walk of w2')
-    xlabel('Number of Iterations')
-    ylabel('w2')
-    legend('Estimated w2', 'Optimal w2')
-    hold off
+  /* -------- LMS Algorithm -------- */
+  const w_lms = [
+    Array(N).fill(0),
+    Array(N).fill(0)
+  ];
+  const e = Array(N).fill(0);
 
-endfunction
-N = 500;
-u_init = [0.5, 1];
-mu = 0.1;
-lms_ar(N, u_init, mu);
- `;
+  for (let i = 1; i < N; i++) {
+    const x = [v[i], v[i - 1]];
+    const y = w_lms[0][i - 1] * x[0] + w_lms[1][i - 1] * x[1];
+    e[i] = u[i] - y;
+
+    w_lms[0][i] = w_lms[0][i - 1] + mu * x[0] * e[i];
+    w_lms[1][i] = w_lms[1][i - 1] + mu * x[1] * e[i];
+  }`;
     setCode(generatedCode);
     setCodeHtml(`<pre>${generatedCode}</pre>`);
   };
 
-  const handleRun = async () => {
-  setLoading(true);  // Start loading
-  setShowImages(false);  // Hide images until new ones are loaded
-  const data = {
-      N: inputs.find(input => input.id === 'num-samples').value,
-      u_init: [inputs.find(input => input.id === 'u1').value, inputs.find(input => input.id === 'u2').value],
-      mu: inputs.find(input => input.id === 'step-size').value
-  };
-
-  try {
-    const response = await axios.post('http://localhost:5000/ar_lms', data, {
-      headers: {
-        // 'Content-Type': 'multipart/form-data'
-      }
-    });
-    
-    setImageUrls(response.data.images.map(img => `http://localhost:5000${img}`));
-    setShowImages(true);  // Show images after loading
-  } catch (error) {
-    console.error('Error running the script:', error);
-  } finally {
-    setLoading(false);  // Stop loading
-  }
-};
-  
   const handleDownload = () => {
+    if (!code) {
+      alert("Please generate the code first.");
+      return;
+    }
     const element = document.createElement("a");
     const file = new Blob([code], { type: 'text/plain' });
     element.href = URL.createObjectURL(file);
-    element.download = "rls_denoise.m";
-    document.body.appendChild(element); // Required for this to work in FireFox
+    element.download = `lms_ar_${inputs.find(i=>i.id==='unique-id').value}.m`;
+    document.body.appendChild(element);
     element.click();
   };
 
-  const SphereLoading = () => (
-  <div className="flex felx-col fixed inset-0 flex items-center justify-center bg-white bg-opacity-50 ">
-    <div className="w-20 h-10">
-      <div className="relative w-full h-full overflow-hidden p-2 pl-3">
-        <p className='font-sans text-sm font-bold'>Loading...</p>
-        <div className="absolute inset-0 bg-blue-button rounded-lg animate-pulse opacity-0 text-black">
-        </div>
-        
-      </div>
-    </div>
-  </div>  
-);
-
   return (
     <div className='flex flex-col space-y-10'>
-      <div className="flex flex-row gap-5 space-x-5"> 
+      <div className="flex flex-row gap-5 space-x-5">
         <div className='flex flex-col'>
-          <iframe
-            srcDoc={codeHtml}
-            title="Generated Code"
-            width="650"
-            height="262"
-            className='outline border-4 p-2 rounded-sm border-blue-hover'
-          ></iframe>
+          <iframe srcDoc={codeHtml} title="Generated Code" width="650" height="262" className='outline border-4 p-2 rounded-sm border-blue-hover'/>
           <div className='flex justify-between text-sm'>
-            <button 
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleDownload}
-            >
-              Download
-            </button>
-            <button 
-              className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8"
-              onClick={handleRun}
-            >
-              Submit & Run
-            </button>
+            <button className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8" onClick={handleDownload}>Download</button>
+            <button className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8" onClick={handleRun}>Submit and Run</button>
+            <button className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-8" onClick={handleGenerateCode}>Generate Code</button>
           </div>
+
+          {plots && (
+            <div className='mt-5 flex flex-col space-y-4'>
+              <Line
+                data={{
+                  labels: Array.from({length: plots.N}, (_,i)=>i+1),
+                  datasets: [{ label:"MSE", data: plots.e.map(v=>v*v), borderColor:"rgba(108, 181, 253, 0.7)", pointRadius:0 }]
+                }}
+              />
+              <Line
+                data={{
+                  labels: Array.from({length: plots.N}, (_,i)=>i+1),
+                  datasets: [
+                    { label:"w1 LMS", data: plots.w_lms[0], borderColor:"rgba(108, 181, 253, 0.7)", pointRadius:0 },
+                    { label:"w1 Optimal", data: Array(plots.N).fill(plots.w_opt[0]), borderColor:"green", pointRadius:0 }
+                  ]
+                }}
+              />
+              <Line
+                data={{
+                  labels: Array.from({length: plots.N}, (_,i)=>i+1),
+                  datasets: [
+                    { label:"w2 LMS", data: plots.w_lms[1], borderColor:"rgba(108, 181, 253, 0.7)", pointRadius:0 },
+                    { label:"w2 Optimal", data: Array(plots.N).fill(plots.w_opt[1]), borderColor:"green", pointRadius:0 }
+                  ]
+                }}
+              />
+            </div>
+          )}
         </div>
+
         <div className="text-sm">
           <div className='flex flex-col items-center'>
-            <p className='font-bold'>
-            Select the input Parameters
-            </p>
+            <p className='font-bold'>Select Input Parameters</p>
             <div className='bg-blue-hover px-5 py-3 mt-2 rounded-xl'>
               {inputs.map(input => (
-                <div key={input.id} className="flex flex-col items-center">
-                  <label htmlFor={input.id} className="block mb-2">
-                    <pre className='font-serif'>
-                      <span>{input.min} ≤ </span> {input.label} <span> ≤  {input.max} </span>
-                    </pre>
-                  </label>
-                  <div className="flex flex-row items-center">
-                    <input
-                      type="number"
-                      id={input.id}
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={input.value}
-                      onChange={(e) => handleInputChange(input.id, e.target.value)}
-                      className="w-16 text-center border border-gray-300 rounded-lg py-1 focus:outline-none focus:border-blue-500"
-                    />
-                    <input
-                      type="range"
-                      min={input.min}
-                      max={input.max}
-                      step={input.step}
-                      value={input.value}
-                      onChange={(e) => handleInputChange(input.id, e.target.value)}
-                      className="flex-grow ml-2 "
-                    />
-                  </div>
+                <div key={input.id} className="flex flex-col items-center mb-2">
+                  <pre>{input.min} ≤ {input.label} ≤ {input.max}</pre>
+                  <input type="number" value={input.value} min={input.min} max={input.max} step={input.step} onChange={(e)=>handleInputChange(input.id, Number(e.target.value))} className="w-16 text-center border rounded-lg mb-1"/>
+                  <input type="range" min={input.min} max={input.max} step={input.step} value={input.value} onChange={(e)=>handleInputChange(input.id, Number(e.target.value))} className="flex-grow"/>
                 </div>
               ))}
             </div>
           </div>
-          <div className="flex flex-col">
-            <button onClick={handleGenerateCode} className="bg-blue-button rounded-lg px-3 py-1 hover:bg-blue-hover mt-10">
-              Generate Code
-            </button>
-          </div>
         </div>
       </div>
-       {loading && <SphereLoading/>}
-        {!loading && showImages && (
-          <div className=' mt-5 flex flex-col space-y-2'>
-            {imageUrls.map((url, index) => (
-              <img key={index} src={url} alt={`Output ${index + 1}`}/>
-            ))}
-          </div>
-        )}
     </div>
   );
-};
+}
 
-export default LMS;
+export default LMS_AR;
