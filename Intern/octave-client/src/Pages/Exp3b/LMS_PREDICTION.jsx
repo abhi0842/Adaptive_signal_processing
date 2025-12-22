@@ -22,6 +22,7 @@ ChartJS.register(
 );
 
 const LMS = () => {
+  
   const [inputs, setInputs] = useState([
     { id: 'mu1', label: 'Step-size (µ)', min: 0.001, max: 0.1, step: 0.001, value: 0.01 },
     { id: 'mu2', label: 'Step-size (µ)', min: 0.001, max: 0.1, step: 0.001, value: 0.05 },
@@ -38,6 +39,7 @@ const LMS = () => {
   const [showCharts, setShowCharts] = useState(false);
 
   const randn = () => {
+    
     let u = 0, v = 0;
     while (u === 0) u = Math.random();
     while (v === 0) v = Math.random();
@@ -131,7 +133,11 @@ endfunction`;
   };
 
   const handleRun = () => {
-    setLoading(true);
+     if (!code) {
+      alert("Please generate the code first.");
+      return;
+    }
+    
     setShowCharts(false);
 
     const n = parseInt(inputs.find(i => i.id === 'num-samples').value);
@@ -219,7 +225,10 @@ endfunction`;
   };
 
   const handleDownload = () => {
-    if (!code) return;
+     if (!code) {
+      alert("Please generate the code first.");
+      return;
+    }
     const el = document.createElement('a');
     el.href = URL.createObjectURL(new Blob([code], { type: 'text/plain' }));
     el.download = 'adaptive_filter.m';
