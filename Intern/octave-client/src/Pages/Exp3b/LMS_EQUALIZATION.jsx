@@ -43,6 +43,10 @@ const LMS = () => {
 
   /* ---------- MATLAB-IDENTICAL LMS ---------- */
   const runLMS = () => {
+     if (!code) {
+      alert("Please generate the code first.");
+      return;
+    }
     const N = inputs.find(i => i.id === 'num-samples').value
     const signal_power = inputs.find(i => i.id === 'signal-power').value
     const noise_power = inputs.find(i => i.id === 'noise-power').value
@@ -119,6 +123,11 @@ end`
   }
 
   const handleDownload = () => {
+    if (!code) {
+      alert("Please generate the code first.");
+      return;
+    }
+    
     const element = document.createElement('a')
     const file = new Blob([code], { type: 'text/plain' })
     element.href = URL.createObjectURL(file)
